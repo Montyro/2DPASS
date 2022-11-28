@@ -8,6 +8,7 @@
 ![visitors](https://visitor-badge.glitch.me/badge?page_id=https://github.com/yanx27/2DPASS)
 
 
+**This repository modifies the code for loading the datasets, so it is not required to have the kitty images dataset downloaded in order to train the baseline model.**
 
 This repository is for **2DPASS** introduced in the following paper
 

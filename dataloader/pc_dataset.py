@@ -5,7 +5,7 @@ import numpy as np
 from PIL import Image
 from torch.utils import data
 from pathlib import Path
-from nuscenes.utils import splits
+#from nuscenes.utils import splits
 
 REGISTERED_PC_DATASET_CLASSES = {}
 
@@ -86,7 +86,6 @@ class SemanticKITTI(data.Dataset):
                     break
                 key, value = line.split(':', 1)
                 calib_all[key] = np.array([float(x) for x in value.split()])
-
         # reshape matrices
         calib_out = {}
         calib_out['P2'] = calib_all['P2'].reshape(3, 4)  # 3x4 projection matrix for left camera
@@ -114,9 +113,10 @@ class SemanticKITTI(data.Dataset):
                 annotated_data -= 1
                 annotated_data[annotated_data == -1] = self.config['dataset_params']['ignore_label']
 
-        image_file = self.im_idx[index].replace('velodyne', 'image_2').replace('.bin', '.png')
-        image = Image.open(image_file)
-        proj_matrix = self.proj_matrix[int(self.im_idx[index][-22:-20])]
+        if not self.config['baseline_only']:
+            image_file = self.im_idx[index].replace('velodyne', 'image_2').replace('.bin', '.png')
+            image = Image.open(image_file)
+            proj_matrix = self.proj_matrix[int(self.im_idx[index][-22:-20])]
 
         data_dict = {}
         data_dict['xyz'] = points
@@ -124,8 +124,9 @@ class SemanticKITTI(data.Dataset):
         data_dict['instance_label'] = instance_label
         data_dict['signal'] = raw_data[:, 3:4]
         data_dict['origin_len'] = origin_len
-        data_dict['img'] = image
-        data_dict['proj_matrix'] = proj_matrix
+        if not self.config['baseline_only']:
+            data_dict['img'] = image
+            data_dict['proj_matrix'] = proj_matrix
 
         return data_dict, self.im_idx[index]
 

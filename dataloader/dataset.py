@@ -8,7 +8,7 @@ from PIL import Image
 from torch.utils import data
 from torchvision import transforms as T
 from pyquaternion import Quaternion
-from nuscenes.utils.geometry_utils import view_points
+#from nuscenes.utils.geometry_utils import view_points
 
 REGISTERED_DATASET_CLASSES = {}
 REGISTERED_COLATE_CLASSES = {}
@@ -135,20 +135,21 @@ class point_image_dataset_semkitti(data.Dataset):
                 ref_index[drop_idx] = ref_index[0]
 
         # load 2D data
-        image = data['img']
-        proj_matrix = data['proj_matrix']
+        if not self.config['baseline_only']:
+            image = data['img']
+            proj_matrix = data['proj_matrix']
 
-        # project points into image
-        keep_idx = xyz[:, 0] > 0  # only keep point in front of the vehicle
-        points_hcoords = np.concatenate([xyz[keep_idx], np.ones([keep_idx.sum(), 1], dtype=np.float32)], axis=1)
-        img_points = (proj_matrix @ points_hcoords.T).T
-        img_points = img_points[:, :2] / np.expand_dims(img_points[:, 2], axis=1)  # scale 2D points
-        keep_idx_img_pts = self.select_points_in_frustum(img_points, 0, 0, *image.size)
-        keep_idx[keep_idx] = keep_idx_img_pts
+            # project points into image
+            keep_idx = xyz[:, 0] > 0  # only keep point in front of the vehicle
+            points_hcoords = np.concatenate([xyz[keep_idx], np.ones([keep_idx.sum(), 1], dtype=np.float32)], axis=1)
+            img_points = (proj_matrix @ points_hcoords.T).T
+            img_points = img_points[:, :2] / np.expand_dims(img_points[:, 2], axis=1)  # scale 2D points
+            keep_idx_img_pts = self.select_points_in_frustum(img_points, 0, 0, *image.size)
+            keep_idx[keep_idx] = keep_idx_img_pts
 
-        # fliplr so that indexing is row, col and not col, row
-        img_points = np.fliplr(img_points)
-        points_img = img_points[keep_idx_img_pts]
+            # fliplr so that indexing is row, col and not col, row
+            img_points = np.fliplr(img_points)
+            points_img = img_points[keep_idx_img_pts]
 
         ### 3D Augmentation ###
         # random data augmentation by rotation
@@ -180,53 +181,57 @@ class point_image_dataset_semkitti(data.Dataset):
 
             xyz[:, 0:3] += noise_translate
 
-        img_label = labels[keep_idx]
-        point2img_index = np.arange(len(labels))[keep_idx]
         feat = np.concatenate((xyz, sig), axis=1)
 
-        ### 2D Augmentation ###
-        if self.bottom_crop:
-            # self.bottom_crop is a tuple (crop_width, crop_height)
-            left = int(np.random.rand() * (image.size[0] + 1 - self.bottom_crop[0]))
-            right = left + self.bottom_crop[0]
-            top = image.size[1] - self.bottom_crop[1]
-            bottom = image.size[1]
+        if not self.config['baseline_only']:
+            img_label = labels[keep_idx]
+            point2img_index = np.arange(len(labels))[keep_idx]
+            
 
-            # update image points
-            keep_idx = points_img[:, 0] >= top
-            keep_idx = np.logical_and(keep_idx, points_img[:, 0] < bottom)
-            keep_idx = np.logical_and(keep_idx, points_img[:, 1] >= left)
-            keep_idx = np.logical_and(keep_idx, points_img[:, 1] < right)
+            
+            ### 2D Augmentation ###
+            if self.bottom_crop:
+                # self.bottom_crop is a tuple (crop_width, crop_height)
+                left = int(np.random.rand() * (image.size[0] + 1 - self.bottom_crop[0]))
+                right = left + self.bottom_crop[0]
+                top = image.size[1] - self.bottom_crop[1]
+                bottom = image.size[1]
 
-            # crop image
-            image = image.crop((left, top, right, bottom))
-            points_img = points_img[keep_idx]
-            points_img[:, 0] -= top
-            points_img[:, 1] -= left
+                # update image points
+                keep_idx = points_img[:, 0] >= top
+                keep_idx = np.logical_and(keep_idx, points_img[:, 0] < bottom)
+                keep_idx = np.logical_and(keep_idx, points_img[:, 1] >= left)
+                keep_idx = np.logical_and(keep_idx, points_img[:, 1] < right)
 
-            img_label = img_label[keep_idx]
-            point2img_index = point2img_index[keep_idx]
+                # crop image
+                image = image.crop((left, top, right, bottom))
+                points_img = points_img[keep_idx]
+                points_img[:, 0] -= top
+                points_img[:, 1] -= left
 
-        img_indices = points_img.astype(np.int64)
+                img_label = img_label[keep_idx]
+                point2img_index = point2img_index[keep_idx]
 
-        # 2D augmentation
-        if self.color_jitter is not None:
-            image = self.color_jitter(image)
+            img_indices = points_img.astype(np.int64)
 
-        # PIL to numpy
-        image = np.array(image, dtype=np.float32, copy=False) / 255.
+            # 2D augmentation
+            if self.color_jitter is not None:
+                image = self.color_jitter(image)
 
-        # 2D augmentation
-        if np.random.rand() < self.flip2d:
-            image = np.ascontiguousarray(np.fliplr(image))
-            img_indices[:, 1] = image.shape[1] - 1 - img_indices[:, 1]
+            # PIL to numpy
+            image = np.array(image, dtype=np.float32, copy=False) / 255.
 
-        # normalize image
-        if self.image_normalizer:
-            mean, std = self.image_normalizer
-            mean = np.asarray(mean, dtype=np.float32)
-            std = np.asarray(std, dtype=np.float32)
-            image = (image - mean) / std
+            # 2D augmentation
+            if np.random.rand() < self.flip2d:
+                image = np.ascontiguousarray(np.fliplr(image))
+                img_indices[:, 1] = image.shape[1] - 1 - img_indices[:, 1]
+
+            # normalize image
+            if self.image_normalizer:
+                mean, std = self.image_normalizer
+                mean = np.asarray(mean, dtype=np.float32)
+                std = np.asarray(std, dtype=np.float32)
+                image = (image - mean) / std
 
         data_dict = {}
         data_dict['point_feat'] = feat
@@ -239,11 +244,17 @@ class point_image_dataset_semkitti(data.Dataset):
         data_dict['origin_len'] = origin_len
         data_dict['root'] = root
 
-        data_dict['img'] = image
-        data_dict['img_indices'] = img_indices
-        data_dict['img_label'] = img_label
-        data_dict['point2img_index'] = point2img_index
+        if not self.config['baseline_only']:
 
+            data_dict['img'] = image
+            data_dict['img_indices'] = img_indices
+            data_dict['img_label'] = img_label
+            data_dict['point2img_index'] = point2img_index
+            data_dict['baseline_only'] = False
+
+        else:
+            data_dict['baseline_only'] = True
+            
         return data_dict
 
 
@@ -463,12 +474,15 @@ def collate_fn_default(data):
     ref_labels = data[0]['ref_label']
     origin_len = data[0]['origin_len']
     ref_indices = [torch.from_numpy(d['ref_index']) for d in data]
-    point2img_index = [torch.from_numpy(d['point2img_index']).long() for d in data]
-    path = [d['root'] for d in data]
 
-    img = [torch.from_numpy(d['img']) for d in data]
-    img_indices = [d['img_indices'] for d in data]
-    img_label = [torch.from_numpy(d['img_label']) for d in data]
+    if not data[0]['baseline_only']:
+        point2img_index = [torch.from_numpy(d['point2img_index']).long() for d in data]
+
+    path = [d['root'] for d in data]
+    if not data[0]['baseline_only']:
+        img = [torch.from_numpy(d['img']) for d in data]
+        img_indices = [d['img_indices'] for d in data]
+        img_label = [torch.from_numpy(d['img_label']) for d in data]
 
     b_idx = []
     for i in range(batch_size):
@@ -476,19 +490,32 @@ def collate_fn_default(data):
     points = [torch.from_numpy(d['point_feat']) for d in data]
     ref_xyz = [torch.from_numpy(d['ref_xyz']) for d in data]
     labels = [torch.from_numpy(d['point_label']) for d in data]
+    if not data[0]['baseline_only']:
+        return {
+            'points': torch.cat(points).float(),
+            'ref_xyz': torch.cat(ref_xyz).float(),
+            'batch_idx': torch.cat(b_idx).long(),
+            'batch_size': batch_size,
+            'labels': torch.cat(labels).long().squeeze(1),
+            'raw_labels': torch.from_numpy(ref_labels).long(),
+            'origin_len': origin_len,
+            'indices': torch.cat(ref_indices).long(),
+            'point2img_index': point2img_index,
+            'img': torch.stack(img, 0).permute(0, 3, 1, 2),
+            'img_indices': img_indices,
+            'img_label': torch.cat(img_label, 0).squeeze(1).long(),
+            'path': path,
+        }
+    else:
+        return {
+            'points': torch.cat(points).float(),
+            'ref_xyz': torch.cat(ref_xyz).float(),
+            'batch_idx': torch.cat(b_idx).long(),
+            'batch_size': batch_size,
+            'labels': torch.cat(labels).long().squeeze(1),
+            'raw_labels': torch.from_numpy(ref_labels).long(),
+            'origin_len': origin_len,
+            'indices': torch.cat(ref_indices).long(),
+            'path': path,
+        }
 
-    return {
-        'points': torch.cat(points).float(),
-        'ref_xyz': torch.cat(ref_xyz).float(),
-        'batch_idx': torch.cat(b_idx).long(),
-        'batch_size': batch_size,
-        'labels': torch.cat(labels).long().squeeze(1),
-        'raw_labels': torch.from_numpy(ref_labels).long(),
-        'origin_len': origin_len,
-        'indices': torch.cat(ref_indices).long(),
-        'point2img_index': point2img_index,
-        'img': torch.stack(img, 0).permute(0, 3, 1, 2),
-        'img_indices': img_indices,
-        'img_label': torch.cat(img_label, 0).squeeze(1).long(),
-        'path': path,
-    }
